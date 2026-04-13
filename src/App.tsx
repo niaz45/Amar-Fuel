@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-ro
 import { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
 import { User } from './types';
-import { Fuel, MapPin, User as UserIcon, LogOut, LayoutDashboard, Search, Filter } from 'lucide-react';
+import { Fuel, MapPin, User as UserIcon, LogOut, LayoutDashboard, Search, Filter, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Pages
@@ -17,8 +17,16 @@ import CheckoutPage from './pages/CheckoutPage';
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isConfigured, setIsConfigured] = useState(true);
 
   useEffect(() => {
+    // Check if Supabase is configured
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      setIsConfigured(false);
+      setLoading(false);
+      return;
+    }
+
     // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -66,6 +74,26 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!isConfigured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="max-w-md w-full bg-white p-8 shadow-xl border border-red-100 text-center">
+          <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-black text-gray-900 mb-4">Configuration Missing</h1>
+          <p className="text-gray-600 font-medium mb-8">
+            Supabase environment variables are not set. Please add <code className="bg-gray-100 px-1 rounded text-primary">VITE_SUPABASE_URL</code> and <code className="bg-gray-100 px-1 rounded text-primary">VITE_SUPABASE_ANON_KEY</code> to your Vercel project settings.
+          </p>
+          <div className="bg-gray-50 p-4 rounded text-left text-xs font-mono text-gray-500 overflow-auto">
+            VITE_SUPABASE_URL=https://your-project.supabase.co<br/>
+            VITE_SUPABASE_ANON_KEY=your-anon-key
+          </div>
+        </div>
       </div>
     );
   }
