@@ -14,6 +14,7 @@ export default function HomePage({ user }: { user: User | null }) {
   const [featuredPumps, setFeaturedPumps] = useState<Pump[]>([]);
   const [popup, setPopup] = useState<PopupBanner | null>(null);
   const [showPopup, setShowPopup] = useState(false);
+  const [locations, setLocations] = useState<any[]>([]);
 
   // Add Pump Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -59,12 +60,40 @@ export default function HomePage({ user }: { user: User | null }) {
         setPopup(popupData);
         setShowPopup(true);
       }
+
+      // Fetch locations
+      const { data: locationsData } = await supabase.from('locations').select('*').order('division', { ascending: true });
+      setLocations(locationsData || []);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  // Dynamic location helpers
+  const availableDivisions = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.map(l => l.division))).sort();
+    }
+    return DIVISIONS;
+  }, [locations]);
+
+  const availableDistricts = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.filter(l => l.division === (division || newDivision)).map(l => l.district))).sort();
+    }
+    const currentDiv = division || newDivision;
+    return currentDiv ? DISTRICTS[currentDiv] || [] : [];
+  }, [locations, division, newDivision]);
+
+  const availableUpazilas = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.filter(l => l.district === (district || newDistrict)).map(l => l.upazila))).sort();
+    }
+    const currentDist = district || newDistrict;
+    return currentDist ? UPAZILAS[currentDist] || [] : [];
+  }, [locations, district, newDistrict]);
 
   useEffect(() => {
     let result = [...pumps];
@@ -230,7 +259,7 @@ export default function HomePage({ user }: { user: User | null }) {
             }}
           >
             <option value="">All Divisions</option>
-            {DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            {availableDivisions.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
 
           <select
@@ -243,7 +272,7 @@ export default function HomePage({ user }: { user: User | null }) {
             disabled={!division}
           >
             <option value="">All Districts</option>
-            {division && DISTRICTS[division]?.map(d => (
+            {availableDistricts.map(d => (
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
@@ -255,7 +284,7 @@ export default function HomePage({ user }: { user: User | null }) {
             disabled={!district}
           >
             <option value="">All Upazilas</option>
-            {district && UPAZILAS[district]?.map(u => (
+            {availableUpazilas.map(u => (
               <option key={u} value={u}>{u}</option>
             ))}
           </select>
@@ -430,6 +459,7 @@ export default function HomePage({ user }: { user: User | null }) {
           setNewUpazila(data.upazila);
           setNewAddress(data.address);
         }}
+        availableLocations={{ divisions: availableDivisions, districts: availableDistricts, upazilas: availableUpazilas }}
       />
     </div>
   );
@@ -518,13 +548,15 @@ function AddPumpModal({
   onClose, 
   onSubmit,
   formData,
-  setFormData
+  setFormData,
+  availableLocations
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   onSubmit: (e: React.FormEvent) => void;
   formData: any;
   setFormData: any;
+  availableLocations: { divisions: string[], districts: string[], upazilas: string[] };
 }) {
   return (
     <AnimatePresence>
@@ -576,7 +608,7 @@ function AddPumpModal({
                       className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none font-bold"
                     >
                       <option value="">Select</option>
-                      {DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}
+                      {availableLocations.divisions.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                   </div>
                   <div>
@@ -589,7 +621,7 @@ function AddPumpModal({
                       className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none disabled:opacity-50 font-bold"
                     >
                       <option value="">Select</option>
-                      {formData.division && DISTRICTS[formData.division as keyof typeof DISTRICTS]?.map(d => (
+                      {availableLocations.districts.map(d => (
                         <option key={d} value={d}>{d}</option>
                       ))}
                     </select>
@@ -606,7 +638,7 @@ function AddPumpModal({
                     className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none disabled:opacity-50 font-bold"
                   >
                     <option value="">Select</option>
-                    {formData.district && UPAZILAS[formData.district as keyof typeof UPAZILAS]?.map(u => (
+                    {availableLocations.upazilas.map(u => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>

@@ -3,22 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Niaz Morshed-FUELBD</title>
+    <title>Niaz Morshed FUELBD</title>
     <script>
       // Fix for "Cannot set property fetch of #<Window> which has only a getter"
       (function() {
         try {
           const descriptor = Object.getOwnPropertyDescriptor(window, 'fetch');
-          if (descriptor && descriptor.get && !descriptor.set && !descriptor.writable) {
+          if (descriptor && descriptor.get && !descriptor.set) {
             const originalFetch = window.fetch;
-            Object.defineProperty(window, 'fetch', {
-              value: originalFetch,
-              writable: true,
-              configurable: true
-            });
+            try {
+              Object.defineProperty(window, 'fetch', {
+                get: function() { return originalFetch; },
+                set: function(v) { 
+                  console.warn('Attempted to overwrite window.fetch was ignored to prevent TypeError.');
+                },
+                configurable: true
+              });
+            } catch (e) {
+              // Fallback: try to make it writable if the above failed
+              try {
+                Object.defineProperty(window, 'fetch', {
+                  value: originalFetch,
+                  writable: true,
+                  configurable: true
+                });
+              } catch (e2) {
+                // If both fail, it's likely not configurable
+              }
+            }
           }
         } catch (e) {
-          console.warn('Failed to patch window.fetch:', e);
+          // Ignore
         }
       })();
     </script>
