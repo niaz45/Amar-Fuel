@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { mockService } from '../mockService';
 import { Pump, User, FuelTypes } from '../types';
 import { 
   Fuel, 
@@ -47,13 +46,24 @@ export default function CheckoutPage({ user }: { user: User | null }) {
 
   useEffect(() => {
     if (!pumpId) return;
-    const p = mockService.getPump(pumpId);
-    if (p) {
-      setPump(p);
-    } else {
-      navigate('/');
-    }
-    setLoading(false);
+    const fetchPump = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('pumps')
+          .select('*')
+          .eq('id', pumpId)
+          .single();
+        if (error) throw error;
+        setPump(data);
+      } catch (err) {
+        console.error('Error fetching pump:', err);
+        navigate('/');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPump();
   }, [pumpId, navigate]);
 
   const totalPrice = amount * (fuelPrices[fuelType] || 0);
@@ -66,7 +76,7 @@ export default function CheckoutPage({ user }: { user: User | null }) {
     setError(null);
 
     try {
-      const { data, error: sbError } = await supabase
+      const { error: sbError } = await supabase
         .from('orders')
         .insert([
           {
@@ -84,15 +94,6 @@ export default function CheckoutPage({ user }: { user: User | null }) {
       if (sbError) throw sbError;
 
       setSuccess(true);
-      // Log activity in mock service too for consistency in UI
-      await mockService.logActivity({
-        user_id: user.id,
-        pump_id: pump.id,
-        action: 'order_placed',
-        details: `Placed order for ${amount}L of ${fuelType}`,
-        timestamp: new Date().toISOString()
-      });
-
     } catch (err) {
       console.error('Checkout error:', err);
       setError(err instanceof Error ? err.message : 'Failed to process order. Please ensure the "orders" table exists in your Supabase project.');

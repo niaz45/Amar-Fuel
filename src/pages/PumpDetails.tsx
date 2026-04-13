@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { mockService } from '../mockService';
-import { Pump, User, Report, FuelTypes, FuelStatus, AggregatedStatus } from '../types';
+import { supabase } from '../lib/supabase';
+import { Pump, User, Report, FuelTypes, FuelStatus } from '../types';
 import { STATUS_COLORS, STATUS_LABELS, FUEL_TYPES } from '../constants';
 import { 
   MapPin, 
@@ -39,22 +39,37 @@ export default function PumpDetails({ user }: { user: User | null }) {
 
   useEffect(() => {
     if (!id) return;
+    fetchData();
+  }, [id]);
 
-    const updateData = () => {
-      const p = mockService.getPump(id);
-      if (p) {
-        setPump(p);
-        setReports(mockService.getAllReports(id));
-      } else {
-        navigate('/');
-      }
+  const fetchData = async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const { data: pumpData, error: pumpError } = await supabase
+        .from('pumps')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (pumpError) throw pumpError;
+      setPump(pumpData);
+
+      const { data: reportsData, error: reportsError } = await supabase
+        .from('reports')
+        .select('*')
+        .eq('pump_id', id)
+        .order('created_at', { ascending: false });
+
+      if (reportsError) throw reportsError;
+      setReports(reportsData || []);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      navigate('/');
+    } finally {
       setLoading(false);
-    };
-
-    updateData();
-    const unsubscribe = mockService.subscribe(updateData);
-    return () => unsubscribe();
-  }, [id, navigate]);
+    }
+  };
 
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,15 +77,27 @@ export default function PumpDetails({ user }: { user: User | null }) {
 
     setSubmitting(true);
     try {
-      await mockService.submitReport({
+      const { error } = await supabase.from('reports').insert({
         pump_id: id,
+        user_id: user.id,
         fuel_type: selectedFuel,
         status: selectedStatus,
-        comment: comment || undefined
+        comment: comment || null,
       });
+
+      if (error) throw error;
+
+      // Update pump status as well for immediate feedback
+      const { error: updateError } = await supabase
+        .from('pumps')
+        .update({ [selectedFuel]: selectedStatus, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
 
       setShowReportForm(false);
       setComment('');
+      fetchData();
       alert('Report submitted successfully!');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error submitting report');
@@ -81,10 +108,10 @@ export default function PumpDetails({ user }: { user: User | null }) {
 
   const FuelStatusCard = ({ type }: { type: keyof FuelTypes }) => {
     if (!pump) return null;
-    const agg = mockService.getAggregatedStatus(pump.id, type);
+    const status = pump[type as keyof Pump] as FuelStatus;
     
     return (
-      <div className={`p-5 rounded-none border-2 transition-all ${STATUS_COLORS[agg.status] || 'bg-gray-50 border-gray-100'}`}>
+      <div className={`p-5 rounded-none border-2 transition-all ${STATUS_COLORS[status] || 'bg-gray-50 border-gray-100'}`}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="bg-white/80 p-2.5 rounded-none shadow-sm">
@@ -92,61 +119,31 @@ export default function PumpDetails({ user }: { user: User | null }) {
             </div>
             <div>
               <span className="text-xs font-black uppercase tracking-widest opacity-60 block mb-0.5">{type}</span>
-              <span className="font-black text-lg leading-none">{STATUS_LABELS[agg.status]}</span>
+              <span className="font-black text-lg leading-none">{STATUS_LABELS[status]}</span>
             </div>
           </div>
           <div className="text-right">
-            {agg.is_owner_verified ? (
+            {pump.is_verified ? (
               <div className="bg-emerald-600 text-white px-2.5 py-1 rounded-none text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-lg shadow-emerald-100">
                 <ShieldCheck className="w-3 h-3" />
                 Highly Reliable
               </div>
             ) : (
               <div className="bg-white/80 px-2.5 py-1 rounded-none text-[10px] font-black uppercase tracking-wider text-gray-600 shadow-sm">
-                {agg.confidence}% Confidence
+                Community Reported
               </div>
             )}
           </div>
         </div>
 
-        {/* Breakdown Bars */}
-        {!agg.is_owner_verified && agg.total_reports > 0 && (
-          <div className="space-y-2 mb-4">
-            {(['available', 'low', 'out_of_stock'] as FuelStatus[]).map(status => {
-              const count = agg.breakdown[status];
-              const percentage = Math.round((count / agg.total_reports) * 100);
-              if (count === 0) return null;
-              
-              return (
-                <div key={status} className="space-y-1">
-                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider opacity-70">
-                    <span>{status.replace('_', ' ')}</span>
-                    <span>{percentage}%</span>
-                  </div>
-                  <div className="h-1.5 bg-black/5 rounded-none overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${percentage}%` }}
-                      className={`h-full rounded-none ${
-                        status === 'available' ? 'bg-emerald-500' : 
-                        status === 'low' ? 'bg-orange-500' : 'bg-red-500'
-                      }`}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         <div className="flex items-center justify-between text-[10px] font-bold text-gray-500 uppercase tracking-widest pt-3 border-t border-black/5">
           <div className="flex items-center gap-1">
             <Users className="w-3 h-3" />
-            {agg.total_reports} Reports
+            Active Tracking
           </div>
           <div className="flex items-center gap-1">
             <Clock className="w-3 h-3" />
-            {new Date(agg.last_updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {new Date(pump.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
         </div>
       </div>
@@ -185,7 +182,7 @@ export default function PumpDetails({ user }: { user: User | null }) {
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <h1 className="text-4xl font-black tracking-tight">{pump.name}</h1>
-                {pump.verified_owner_id && (
+                {pump.is_verified && (
                   <div className="bg-white/20 backdrop-blur-md px-4 py-1.5 rounded-none flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
                     <ShieldCheck className="w-4 h-4" />
                     Verified
@@ -257,7 +254,7 @@ export default function PumpDetails({ user }: { user: User | null }) {
                   Insights & Predictions
                 </h2>
                 {/* AI Prediction */}
-                {pump.verified_owner_id ? (
+                {pump.is_verified ? (
                   <div className="bg-primary/5 p-8 rounded-none border border-primary/10">
                     <div className="flex items-center gap-2 mb-4">
                       <TrendingUp className="w-6 h-6 text-primary" />

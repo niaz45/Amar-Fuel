@@ -1,19 +1,20 @@
 import { useState, useEffect, useMemo } from 'react';
-import { mockService } from '../mockService';
-import { Pump, User, Notice, PopupBanner, LocationData } from '../types';
-import { DIVISIONS, DISTRICTS, UPAZILAS, STATUS_COLORS, STATUS_LABELS, FUEL_TYPES, DEFAULT_INVENTORY } from '../constants';
-import { Search, MapPin, Fuel, Clock, ShieldCheck, Users, User as UserIcon, AlertTriangle, PlusCircle, X, Bell, Star, ExternalLink } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { Pump, User, Notice, PopupBanner } from '../types';
+import { DIVISIONS, DISTRICTS, UPAZILAS, STATUS_COLORS, STATUS_LABELS, FUEL_TYPES } from '../constants';
+import { Search, MapPin, Fuel, Clock, ShieldCheck, User as UserIcon, AlertTriangle, PlusCircle, X, Star, ExternalLink, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function HomePage({ user }: { user: User | null }) {
-  const [pumps, setPumps] = useState<Pump[]>(mockService.getPumps());
+  const [pumps, setPumps] = useState<Pump[]>([]);
   const [filteredPumps, setFilteredPumps] = useState<Pump[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [featuredPumps, setFeaturedPumps] = useState<Pump[]>([]);
   const [popup, setPopup] = useState<PopupBanner | null>(null);
   const [showPopup, setShowPopup] = useState(false);
-  const [locations, setLocations] = useState<LocationData[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
 
   // Add Pump Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -34,36 +35,74 @@ export default function HomePage({ user }: { user: User | null }) {
   const [status, setStatus] = useState('all');
 
   useEffect(() => {
-    const loadData = () => {
-      setPumps(mockService.getPumps());
-      setNotices(mockService.getNotices());
-      setLocations(mockService.getLocations());
-      
-      const banner = mockService.getPopupBanner();
-      setPopup(banner);
-      
-      // Show popup once per session
-      if (banner.is_active && !sessionStorage.getItem('fuelbd_popup_shown')) {
-        setShowPopup(true);
-        sessionStorage.setItem('fuelbd_popup_shown', 'true');
-      }
-    };
-
-    loadData();
-    const unsubscribe = mockService.subscribe(loadData);
-    return () => unsubscribe();
+    fetchData();
   }, []);
 
-  const featuredPumps = useMemo(() => pumps.filter(p => p.is_featured && p.status === 'approved'), [pumps]);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Fetch pumps
+      const { data: pumpsData, error: pumpsError } = await supabase
+        .from('pumps')
+        .select('*')
+        .eq('is_verified', true);
+      if (pumpsError) throw pumpsError;
+      setPumps(pumpsData || []);
+      setFeaturedPumps(pumpsData?.filter(p => p.is_featured) || []);
+
+      // Fetch notices
+      const { data: noticesData } = await supabase.from('notices').select('*').order('created_at', { ascending: false });
+      setNotices(noticesData || []);
+
+      // Fetch popup
+      const { data: popupData } = await supabase.from('popup_banner').select('*').eq('is_active', true).single();
+      if (popupData) {
+        setPopup(popupData);
+        setShowPopup(true);
+      }
+
+      // Fetch locations
+      const { data: locationsData } = await supabase.from('locations').select('*').order('division', { ascending: true });
+      setLocations(locationsData || []);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Dynamic location helpers
+  const availableDivisions = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.map(l => l.division))).sort();
+    }
+    return DIVISIONS;
+  }, [locations]);
+
+  const availableDistricts = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.filter(l => l.division === (division || newDivision)).map(l => l.district))).sort();
+    }
+    const currentDiv = division || newDivision;
+    return currentDiv ? DISTRICTS[currentDiv] || [] : [];
+  }, [locations, division, newDivision]);
+
+  const availableUpazilas = useMemo(() => {
+    if (locations.length > 0) {
+      return Array.from(new Set(locations.filter(l => l.district === (district || newDistrict)).map(l => l.upazila))).sort();
+    }
+    const currentDist = district || newDistrict;
+    return currentDist ? UPAZILAS[currentDist] || [] : [];
+  }, [locations, district, newDistrict]);
 
   useEffect(() => {
-    let result = pumps.filter(p => p.status === 'approved' && !p.is_featured);
+    let result = [...pumps];
 
     if (division) result = result.filter(p => p.division === division);
     if (district) result = result.filter(p => p.district === district);
     if (upazila) result = result.filter(p => p.upazila === upazila);
     if (fuelType) {
-      result = result.filter(p => p.fuel_types?.[fuelType as keyof typeof p.fuel_types] === 'available');
+      result = result.filter(p => p[fuelType as keyof Pump] === 'available');
     }
     if (searchQuery) {
       result = result.filter(p => 
@@ -74,40 +113,39 @@ export default function HomePage({ user }: { user: User | null }) {
 
     // Sort
     if (sortBy === 'newest') {
-      result = [...result].sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+      result = [...result].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
     } else if (sortBy === 'oldest') {
-      result = [...result].sort((a, b) => new Date(a.last_updated).getTime() - new Date(b.last_updated).getTime());
+      result = [...result].sort((a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime());
     } else if (sortBy === 'trust') {
-      result = [...result].sort((a, b) => b.trust_score - a.trust_score);
+      result = [...result].sort((a, b) => (b.trust_score || 0) - (a.trust_score || 0));
     }
 
     // Limit
     result = result.slice(0, parseInt(limit));
 
     setFilteredPumps(result);
-  }, [division, district, upazila, searchQuery, sortBy, limit, pumps]);
+  }, [division, district, upazila, searchQuery, sortBy, limit, pumps, fuelType]);
 
   const handleAddPump = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     try {
-      await mockService.addPump({
+      const { error } = await supabase.from('pumps').insert({
         name: newName,
         division: newDivision,
         district: newDistrict,
         upazila: newUpazila,
         address: newAddress,
-        fuel_types: {
-          octane: 'available',
-          petrol: 'available',
-          diesel: 'available',
-          cng: 'available',
-          lpg: 'available'
-        },
-        inventory: DEFAULT_INVENTORY,
-        last_updated: new Date().toISOString(),
-        trust_score: 50,
-        status: 'pending'
+        octane: 'available',
+        petrol: 'available',
+        diesel: 'available',
+        cng: 'available',
+        owner_id: user.id,
+        is_verified: false,
+        updated_at: new Date().toISOString(),
       });
+
+      if (error) throw error;
       alert('Pump added! It will be visible after admin approval.');
       setShowAddModal(false);
       setNewName('');
@@ -121,14 +159,14 @@ export default function HomePage({ user }: { user: User | null }) {
   };
 
   const getTrustIcon = (pump: Pump) => {
-    if (pump.verified_owner_id) return <ShieldCheck className="w-4 h-4 text-primary" />;
-    if (pump.trust_score > 70) return <Users className="w-4 h-4 text-primary" />;
+    if (pump.is_verified) return <ShieldCheck className="w-4 h-4 text-primary" />;
+    if ((pump.trust_score || 0) > 70) return <Users className="w-4 h-4 text-primary" />;
     return <UserIcon className="w-4 h-4 text-gray-400" />;
   };
 
   const getTrustLabel = (pump: Pump) => {
-    if (pump.verified_owner_id) return "Verified Owner";
-    if (pump.trust_score > 70) return "Multiple Users";
+    if (pump.is_verified) return "Verified Owner";
+    if ((pump.trust_score || 0) > 70) return "Multiple Users";
     return "Single User";
   };
 
@@ -221,7 +259,7 @@ export default function HomePage({ user }: { user: User | null }) {
             }}
           >
             <option value="">All Divisions</option>
-            {DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            {availableDivisions.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
 
           <select
@@ -234,7 +272,7 @@ export default function HomePage({ user }: { user: User | null }) {
             disabled={!division}
           >
             <option value="">All Districts</option>
-            {division && DISTRICTS[division]?.map(d => (
+            {availableDistricts.map(d => (
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
@@ -246,7 +284,7 @@ export default function HomePage({ user }: { user: User | null }) {
             disabled={!district}
           >
             <option value="">All Upazilas</option>
-            {district && UPAZILAS[district]?.map(u => (
+            {availableUpazilas.map(u => (
               <option key={u} value={u}>{u}</option>
             ))}
           </select>
@@ -421,7 +459,7 @@ export default function HomePage({ user }: { user: User | null }) {
           setNewUpazila(data.upazila);
           setNewAddress(data.address);
         }}
-        locations={locations}
+        availableLocations={{ divisions: availableDivisions, districts: availableDistricts, upazilas: availableUpazilas }}
       />
     </div>
   );
@@ -429,16 +467,21 @@ export default function HomePage({ user }: { user: User | null }) {
 
 function PumpCard({ pump, isFeatured }: { pump: Pump, isFeatured?: boolean }) {
   const getTrustIcon = (pump: Pump) => {
-    if (pump.verified_owner_id) return <ShieldCheck className="w-4 h-4 text-primary" />;
-    if (pump.trust_score > 70) return <Users className="w-4 h-4 text-primary" />;
+    if (pump.is_verified) return <ShieldCheck className="w-4 h-4 text-primary" />;
     return <UserIcon className="w-4 h-4 text-gray-400" />;
   };
 
   const getTrustLabel = (pump: Pump) => {
-    if (pump.verified_owner_id) return "Verified Owner";
-    if (pump.trust_score > 70) return "Multiple Users";
-    return "Single User";
+    if (pump.is_verified) return "Verified Owner";
+    return "Community Reported";
   };
+
+  const fuelTypes = [
+    { type: 'octane', status: pump.octane },
+    { type: 'petrol', status: pump.petrol },
+    { type: 'diesel', status: pump.diesel },
+    { type: 'cng', status: pump.cng },
+  ];
 
   return (
     <motion.div
@@ -466,10 +509,10 @@ function PumpCard({ pump, isFeatured }: { pump: Pump, isFeatured?: boolean }) {
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-8">
-          {Object.entries(pump.fuel_types || {}).map(([type, status]) => (
-            <div key={type} className={`p-4 rounded-none border flex flex-col items-center justify-center text-center transition-all ${STATUS_COLORS[status] || 'bg-gray-50 border-gray-100 text-gray-400'}`}>
+          {fuelTypes.map(({ type, status }) => (
+            <div key={type} className={`p-4 rounded-none border flex flex-col items-center justify-center text-center transition-all ${STATUS_COLORS[status as keyof typeof STATUS_COLORS] || 'bg-gray-50 border-gray-100 text-gray-400'}`}>
               <span className="text-[10px] uppercase font-black opacity-60 mb-1 tracking-widest">{type}</span>
-              <span className="text-xs font-black">{STATUS_LABELS[status].split(' ')[0]}</span>
+              <span className="text-xs font-black">{STATUS_LABELS[status as keyof typeof STATUS_LABELS]?.split(' ')[0] || 'Unknown'}</span>
             </div>
           ))}
         </div>
@@ -487,7 +530,7 @@ function PumpCard({ pump, isFeatured }: { pump: Pump, isFeatured?: boolean }) {
       <div className="px-8 py-6 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-xs text-gray-400 font-bold">
           <Clock className="w-4 h-4" />
-          <span>Updated {new Date(pump.last_updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          <span>Updated {new Date(pump.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         </div>
         <Link 
           to={`/pump/${pump.id}`}
@@ -506,14 +549,14 @@ function AddPumpModal({
   onSubmit,
   formData,
   setFormData,
-  locations
+  availableLocations
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   onSubmit: (e: React.FormEvent) => void;
   formData: any;
   setFormData: any;
-  locations: LocationData[];
+  availableLocations: { divisions: string[], districts: string[], upazilas: string[] };
 }) {
   return (
     <AnimatePresence>
@@ -565,7 +608,7 @@ function AddPumpModal({
                       className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none font-bold"
                     >
                       <option value="">Select</option>
-                      {locations.map(l => <option key={l.id} value={l.division}>{l.division}</option>)}
+                      {availableLocations.divisions.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                   </div>
                   <div>
@@ -578,8 +621,8 @@ function AddPumpModal({
                       className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none disabled:opacity-50 font-bold"
                     >
                       <option value="">Select</option>
-                      {formData.division && locations.find(l => l.division === formData.division)?.districts.map(d => (
-                        <option key={d.name} value={d.name}>{d.name}</option>
+                      {availableLocations.districts.map(d => (
+                        <option key={d} value={d}>{d}</option>
                       ))}
                     </select>
                   </div>
@@ -595,7 +638,7 @@ function AddPumpModal({
                     className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-none focus:ring-2 focus:ring-primary outline-none disabled:opacity-50 font-bold"
                   >
                     <option value="">Select</option>
-                    {formData.district && locations.find(l => l.division === formData.division)?.districts.find(d => d.name === formData.district)?.upazilas.map(u => (
+                    {availableLocations.upazilas.map(u => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>

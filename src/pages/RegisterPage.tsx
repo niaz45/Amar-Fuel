@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { mockService } from '../mockService';
+import { supabase } from '../lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
 import { Fuel, Mail, Lock, UserPlus, AlertCircle, User as UserIcon, Briefcase, Phone, Calendar, CreditCard, MapPin, Clock, Hash, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { DIVISIONS, DISTRICTS, UPAZILAS, DEFAULT_INVENTORY } from '../constants';
+import { DIVISIONS, DISTRICTS, UPAZILAS } from '../constants';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function RegisterPage() {
@@ -55,44 +55,46 @@ export default function RegisterPage() {
     setLoading(true);
     setError('');
     try {
-      const userData = {
-        name,
-        username,
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email,
-        mobile,
-        role,
-        dob,
-        nid,
-        createdAt: new Date().toISOString(),
-      };
+        password,
+        options: {
+          data: {
+            name,
+            username,
+            mobile,
+            role,
+            dob,
+            nid,
+          }
+        }
+      });
 
-      const user = await mockService.register(userData);
+      if (signUpError) {
+        if (signUpError.message.includes('already registered')) {
+          setError('User already exists. Please login');
+        } else {
+          throw signUpError;
+        }
+        return;
+      }
 
-      if (role === 'owner') {
-        await mockService.addPump({
+      if (role === 'owner' && data.user) {
+        const { error: pumpError } = await supabase.from('pumps').insert({
           name: stationName,
           division,
           district,
           upazila,
-          address,
-          fuel_types: {
-            octane: availableFuels.includes('Octane') ? 'available' : 'out_of_stock',
-            petrol: availableFuels.includes('Petrol') ? 'available' : 'out_of_stock',
-            diesel: availableFuels.includes('Diesel') ? 'available' : 'out_of_stock',
-            cng: availableFuels.includes('CNG') ? 'available' : 'out_of_stock',
-            lpg: availableFuels.includes('LPG') ? 'available' : 'out_of_stock',
-          },
-          inventory: DEFAULT_INVENTORY,
-          last_updated: new Date().toISOString(),
-          trust_score: 100,
-          status: 'pending',
-          verified_owner_id: user.id,
-          opening_date: openingDate,
-          operating_hours: operatingHours,
-          storage_capacity: storageCapacity,
-          dispensers_count: parseInt(dispensersCount) || 0,
-          station_type: stationTypes,
+          octane: availableFuels.includes('Octane') ? 'available' : 'out_of_stock',
+          petrol: availableFuels.includes('Petrol') ? 'available' : 'out_of_stock',
+          diesel: availableFuels.includes('Diesel') ? 'available' : 'out_of_stock',
+          cng: availableFuels.includes('CNG') ? 'available' : 'out_of_stock',
+          owner_id: data.user.id,
+          is_verified: false,
+          updated_at: new Date().toISOString(),
         });
+
+        if (pumpError) throw pumpError;
       }
 
       navigate('/login');

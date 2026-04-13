@@ -23,22 +23,22 @@ export interface Pump {
   division: string;
   district: string;
   upazila: string;
-  address: string;
-  fuel_types: FuelTypes;
-  inventory: Record<keyof FuelTypes, FuelInventory>;
-  verified_owner_id?: string;
-  last_updated: string;
-  trust_score: number;
-  status: VerificationStatus;
+  address?: string;
+  octane: FuelStatus;
+  petrol: FuelStatus;
+  diesel: FuelStatus;
+  cng: FuelStatus;
+  lpg?: FuelStatus;
+  owner_id: string | null;
+  is_verified: boolean;
   is_featured?: boolean;
-  featured_expiry?: string;
-  // Operational Info
-  opening_date?: string;
+  trust_score?: number;
+  emergency_alert?: string;
   operating_hours?: string;
   storage_capacity?: string;
-  dispensers_count?: number;
-  station_type?: string[];
-  emergency_alert?: string;
+  last_updated: string;
+  updated_at: string;
+  status?: 'pending' | 'approved' | 'rejected'; // For admin approvals
 }
 
 export interface User {
@@ -58,15 +58,15 @@ export interface User {
 
 export interface Report {
   id: string;
-  user_id: string;
   pump_id: string;
-  fuel_type: keyof FuelTypes;
+  user_id: string;
+  fuel_type: string;
   status: FuelStatus;
-  timestamp: string;
-  is_owner?: boolean;
   comment?: string;
   owner_response?: string;
   is_resolved?: boolean;
+  timestamp: string;
+  created_at: string;
 }
 
 export interface AggregatedStatus {

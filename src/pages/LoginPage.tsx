@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { mockService } from '../mockService';
+import { supabase } from '../lib/supabase';
 import { Fuel, Mail, Lock, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -16,10 +16,14 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      await mockService.login(email, password);
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
       navigate('/');
     } catch (err: any) {
-      setError(err.message);
+      setError('Email or password is incorrect');
     } finally {
       setLoading(false);
     }

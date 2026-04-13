@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { mockService } from '../mockService';
 import { supabase } from '../lib/supabase';
-import { Pump, User, FuelTypes, FuelStatus, OwnerClaim, Report, ActivityLog, Order } from '../types';
-import { STATUS_COLORS, STATUS_LABELS, FUEL_TYPES, DEFAULT_INVENTORY } from '../constants';
+import { Pump, User, FuelTypes, FuelStatus, Report, Order } from '../types';
+import { STATUS_COLORS, STATUS_LABELS, FUEL_TYPES } from '../constants';
 import { 
   Fuel, 
   ShieldCheck, 
@@ -15,21 +14,15 @@ import {
   Calendar, 
   CreditCard, 
   Phone, 
-  Mail, 
   Droplets, 
-  Hash,
   TrendingUp,
-  History,
   Bell,
   AlertTriangle,
   CheckCircle2,
   XCircle,
   MessageSquare,
   ExternalLink,
-  ArrowUpRight,
-  ArrowDownRight,
   Zap,
-  Activity,
   Building2,
   ShoppingBag
 } from 'lucide-react';
@@ -38,18 +31,15 @@ import { Link } from 'react-router-dom';
 
 export default function OwnerDashboard({ user }: { user: User | null }) {
   const [ownedPumps, setOwnedPumps] = useState<Pump[]>([]);
+  const [allPumps, setAllPumps] = useState<Pump[]>([]);
+  const [claims, setClaims] = useState<any[]>([]);
   const [selectedPumpId, setSelectedPumpId] = useState<string | null>(null);
-  const [allPumps, setAllPumps] = useState<Pump[]>(mockService.getPumps());
-  const [claims, setClaims] = useState<OwnerClaim[]>(mockService.getClaims());
   const [reports, setReports] = useState<Report[]>([]);
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'analytics' | 'reports' | 'orders' | 'activity' | 'profile' | 'claim'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'reports' | 'orders' | 'profile' | 'claim'>('overview');
   const [loadingOrders, setLoadingOrders] = useState(false);
 
-  // Inventory Update State
-  const [litersInput, setLitersInput] = useState<Record<string, string>>({});
   const [reportResponse, setReportResponse] = useState<Record<string, string>>({});
 
   const selectedPump = useMemo(() => 
@@ -60,24 +50,61 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
   useEffect(() => {
     if (!user) return;
 
-    const updateData = () => {
-      const all = mockService.getPumps();
-      setAllPumps(all);
-      const myPumps = all.filter(p => p.verified_owner_id === user.id);
-      setOwnedPumps(myPumps);
-      setClaims(mockService.getClaims().filter(c => c.user_id === user.id));
-      
-      if (myPumps.length > 0) {
-        const currentPumpId = selectedPumpId || myPumps[0].id;
-        setReports(mockService.getAllReports(currentPumpId));
-        setLogs(mockService.getActivityLogs(currentPumpId));
+    const fetchData = async () => {
+      try {
+        // Fetch owned pumps
+        const { data: ownedData, error: ownedError } = await supabase
+          .from('pumps')
+          .select('*')
+          .eq('owner_id', user.id);
+
+        if (ownedError) throw ownedError;
+        setOwnedPumps(ownedData || []);
+        if (ownedData && ownedData.length > 0 && !selectedPumpId) {
+          setSelectedPumpId(ownedData[0].id);
+        }
+
+        // Fetch all pumps for claiming
+        const { data: allData } = await supabase.from('pumps').select('*').is('owner_id', null);
+        setAllPumps(allData || []);
+
+        // Fetch user's claims
+        const { data: claimsData } = await supabase
+          .from('owner_claims')
+          .select('*')
+          .eq('user_id', user.id);
+        setClaims(claimsData || []);
+
+      } catch (err) {
+        console.error('Error fetching dashboard data:', err);
       }
     };
 
-    updateData();
-    const unsubscribe = mockService.subscribe(updateData);
-    return () => unsubscribe();
-  }, [user, selectedPumpId]);
+    fetchData();
+  }, [user]);
+
+  useEffect(() => {
+    if (!selectedPumpId) return;
+
+    const fetchPumpData = async () => {
+      try {
+        const { data: reportsData, error: reportsError } = await supabase
+          .from('reports')
+          .select('*')
+          .eq('pump_id', selectedPumpId)
+          .order('created_at', { ascending: false });
+
+        if (reportsError) throw reportsError;
+        setReports(reportsData || []);
+
+        // Orders are fetched in a separate useEffect when the tab changes
+      } catch (err) {
+        console.error('Error fetching pump data:', err);
+      }
+    };
+
+    fetchPumpData();
+  }, [selectedPumpId]);
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -104,49 +131,32 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
     }
   }, [activeTab, selectedPumpId]);
 
-  const handleUpdateInventory = async (fuelType: keyof FuelTypes, liters: number, isRefill: boolean) => {
+  const handleUpdateInventory = async (fuelType: keyof FuelTypes, status: FuelStatus) => {
     if (!selectedPump) return;
 
-    const currentInv = selectedPump.inventory?.[fuelType] || DEFAULT_INVENTORY[fuelType];
-    let newLiters = isRefill ? currentInv.current_liters + liters : liters;
-    
-    // Auto status logic
-    let newStatus: FuelStatus = 'available';
-    const percentage = (newLiters / currentInv.capacity) * 100;
-    if (percentage <= 0) newStatus = 'out_of_stock';
-    else if (percentage < 20) newStatus = 'low';
-
-    const updatedInventory = {
-      ...selectedPump.inventory,
-      [fuelType]: {
-        ...currentInv,
-        current_liters: newLiters,
-        last_refill_date: isRefill ? new Date().toISOString() : currentInv.last_refill_date,
-        last_refill_amount: isRefill ? liters : currentInv.last_refill_amount
-      }
-    };
-
-    const updatedFuelTypes = {
-      ...selectedPump.fuel_types,
-      [fuelType]: newStatus
-    };
-
     try {
-      await mockService.updatePump(selectedPump.id, {
-        inventory: updatedInventory,
-        fuel_types: updatedFuelTypes,
-        last_updated: new Date().toISOString()
-      });
+      const { error } = await supabase
+        .from('pumps')
+        .update({ 
+          [fuelType]: status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedPump.id);
 
-      await mockService.logActivity({
-        user_id: user!.id,
-        pump_id: selectedPump.id,
-        action: isRefill ? 'Refill' : 'Stock Update',
-        details: `${isRefill ? 'Added' : 'Set'} ${liters}L of ${fuelType}. New status: ${newStatus}`,
-        timestamp: new Date().toISOString()
-      });
+      if (error) throw error;
 
-      setLitersInput(prev => ({ ...prev, [fuelType]: '' }));
+      // Refresh data
+      const { data: updatedPump, error: fetchError } = await supabase
+        .from('pumps')
+        .select('*')
+        .eq('id', selectedPump.id)
+        .single();
+      
+      if (!fetchError && updatedPump) {
+        setOwnedPumps(prev => prev.map(p => p.id === updatedPump.id ? updatedPump : p));
+      }
+
+      alert(`${fuelType.toUpperCase()} status updated to ${status}`);
     } catch (err) {
       console.error('Error updating inventory:', err);
     }
@@ -156,14 +166,26 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
     if (!selectedPump) return;
     const message = window.prompt("Enter emergency message (or leave empty to clear):");
     try {
-      await mockService.setEmergencyAlert(selectedPump.id, message || undefined);
-      await mockService.logActivity({
-        user_id: user!.id,
-        pump_id: selectedPump.id,
-        action: 'Emergency Alert',
-        details: message ? `Alert set: ${message}` : 'Alert cleared',
-        timestamp: new Date().toISOString()
-      });
+      const { error } = await supabase
+        .from('pumps')
+        .update({ 
+          emergency_alert: message || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedPump.id);
+
+      if (error) throw error;
+      
+      // Refresh data
+      const { data: updatedPump, error: fetchError } = await supabase
+        .from('pumps')
+        .select('*')
+        .eq('id', selectedPump.id)
+        .single();
+      
+      if (!fetchError && updatedPump) {
+        setOwnedPumps(prev => prev.map(p => p.id === updatedPump.id ? updatedPump : p));
+      }
     } catch (err) {
       console.error('Error setting alert:', err);
     }
@@ -171,23 +193,32 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
 
   const handleUpdateAllFuel = async (status: FuelStatus) => {
     if (!selectedPump) return;
-    const newFuelTypes = { ...selectedPump.fuel_types };
-    FUEL_TYPES.forEach(type => {
-      newFuelTypes[type] = status;
-    });
-
+    
     try {
-      await mockService.updatePump(selectedPump.id, {
-        fuel_types: newFuelTypes,
-        last_updated: new Date().toISOString()
-      });
-      await mockService.logActivity({
-        user_id: user!.id,
-        pump_id: selectedPump.id,
-        action: 'Bulk Update',
-        details: `All fuel types set to ${status}`,
-        timestamp: new Date().toISOString()
-      });
+      const { error } = await supabase
+        .from('pumps')
+        .update({ 
+          octane: status,
+          petrol: status,
+          diesel: status,
+          cng: status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedPump.id);
+
+      if (error) throw error;
+      
+      // Refresh data
+      const { data: updatedPump, error: fetchError } = await supabase
+        .from('pumps')
+        .select('*')
+        .eq('id', selectedPump.id)
+        .single();
+      
+      if (!fetchError && updatedPump) {
+        setOwnedPumps(prev => prev.map(p => p.id === updatedPump.id ? updatedPump : p));
+      }
+      alert(`All fuel types set to ${status}`);
     } catch (err) {
       console.error('Error bulk updating:', err);
     }
@@ -197,7 +228,14 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
     const response = reportResponse[reportId];
     if (!response) return;
     try {
-      await mockService.respondToReport(reportId, response);
+      const { error } = await supabase
+        .from('reports')
+        .update({ owner_response: response })
+        .eq('id', reportId);
+
+      if (error) throw error;
+      
+      setReports(prev => prev.map(r => r.id === reportId ? { ...r, owner_response: response } : r));
       setReportResponse(prev => ({ ...prev, [reportId]: '' }));
     } catch (err) {
       console.error('Error responding to report:', err);
@@ -207,10 +245,28 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
   const handleClaimPump = async (pumpId: string) => {
     if (!user) return;
     try {
-      await mockService.addClaim(user.id, pumpId);
-      alert('Claim submitted! Admin will review it.');
+      const { error } = await supabase
+        .from('owner_claims')
+        .insert([{
+          user_id: user.id,
+          pump_id: pumpId,
+          verification_status: 'pending',
+          timestamp: new Date().toISOString()
+        }]);
+
+      if (error) throw error;
+
+      // Refresh claims
+      const { data: claimsData } = await supabase
+        .from('owner_claims')
+        .select('*')
+        .eq('user_id', user.id);
+      setClaims(claimsData || []);
+      
+      alert('Claim request submitted successfully. Admin will review your request.');
     } catch (err) {
       console.error('Error claiming pump:', err);
+      alert('Error submitting claim. You may have already claimed this station.');
     }
   };
 
@@ -269,10 +325,8 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
           {[
             { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
             { id: 'inventory', icon: Droplets, label: 'Inventory' },
-            { id: 'analytics', icon: TrendingUp, label: 'Analytics' },
             { id: 'reports', icon: MessageSquare, label: 'Reports' },
             { id: 'orders', icon: ShoppingBag, label: 'Orders' },
-            { id: 'activity', icon: Activity, label: 'Activity' },
             { id: 'profile', icon: UserIcon, label: 'Verification' },
             { id: 'claim', icon: PlusCircle, label: 'Claim Station' }
           ].map(tab => (
@@ -390,7 +444,15 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
                     </div>
                   </div>
                   <button 
-                    onClick={() => mockService.setEmergencyAlert(selectedPump.id, undefined)}
+                    onClick={async () => {
+                      const { error } = await supabase
+                        .from('pumps')
+                        .update({ emergency_alert: null })
+                        .eq('id', selectedPump.id);
+                      if (!error) {
+                        setOwnedPumps(prev => prev.map(p => p.id === selectedPump.id ? { ...p, emergency_alert: null } : p));
+                      }
+                    }}
                     className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-none font-bold text-sm transition-all"
                   >
                     Clear Alert
@@ -404,13 +466,11 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
             <div className="space-y-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {FUEL_TYPES.map(type => {
-                  const inv = selectedPump.inventory?.[type] || DEFAULT_INVENTORY[type];
-                  const percentage = (inv.current_liters / inv.capacity) * 100;
-                  const status = selectedPump.fuel_types?.[type] || 'available';
+                  const status = selectedPump[type as keyof Pump] as FuelStatus;
 
                   return (
                     <div key={type} className="bg-white rounded-none border border-gray-100 shadow-sm overflow-hidden">
-                      <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+                      <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
                         <div className="flex items-center gap-3">
                           <div className="bg-white p-2 rounded-none shadow-sm">
                             <Fuel className="w-5 h-5 text-primary" />
@@ -423,127 +483,25 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
                       </div>
                       
                       <div className="p-6">
-                        <div className="mb-6">
-                          <div className="flex justify-between text-sm mb-2">
-                            <span className="text-gray-500 font-medium">Current Stock</span>
-                            <span className="font-bold text-gray-900">{inv.current_liters.toLocaleString()} / {inv.capacity.toLocaleString()} L</span>
-                          </div>
-                          <div className="w-full h-3 bg-gray-100 rounded-none overflow-hidden">
-                            <motion.div 
-                              initial={{ width: 0 }}
-                              animate={{ width: `${percentage}%` }}
-                              className={`h-full rounded-none ${
-                                percentage < 20 ? 'bg-red-500' : percentage < 50 ? 'bg-yellow-500' : 'bg-emerald-500'
+                        <div className="grid grid-cols-3 gap-3">
+                          {(['available', 'low', 'out_of_stock'] as FuelStatus[]).map(s => (
+                            <button
+                              key={s}
+                              onClick={() => handleUpdateInventory(type, s)}
+                              className={`py-3 rounded-none font-black text-[10px] uppercase tracking-widest transition-all border-2 ${
+                                status === s 
+                                  ? 'bg-primary text-white border-primary' 
+                                  : 'bg-white text-gray-400 border-gray-100 hover:border-gray-200'
                               }`}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 mb-6">
-                          <div className="p-3 bg-gray-50 rounded-none">
-                            <div className="text-[10px] font-black text-gray-400 uppercase mb-1">Daily Usage</div>
-                            <div className="font-bold text-gray-900 flex items-center gap-1">
-                              {inv.daily_usage_avg}L
-                              <ArrowDownRight className="w-3 h-3 text-red-500" />
-                            </div>
-                          </div>
-                          <div className="p-3 bg-gray-50 rounded-none">
-                            <div className="text-[10px] font-black text-gray-400 uppercase mb-1">Last Refill</div>
-                            <div className="font-bold text-gray-900">
-                              {inv.last_refill_amount ? `${inv.last_refill_amount}L` : 'N/A'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="flex gap-2">
-                            <input
-                              type="number"
-                              placeholder="Liters..."
-                              value={litersInput[type] || ''}
-                              onChange={(e) => setLitersInput(prev => ({ ...prev, [type]: e.target.value }))}
-                              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary font-bold"
-                            />
-                            <button
-                              onClick={() => handleUpdateInventory(type, parseInt(litersInput[type]), true)}
-                              disabled={!litersInput[type]}
-                              className="bg-primary text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary-hover transition-all disabled:opacity-50"
                             >
-                              Refill
+                              {s.replace('_', ' ')}
                             </button>
-                            <button
-                              onClick={() => handleUpdateInventory(type, parseInt(litersInput[type]), false)}
-                              disabled={!litersInput[type]}
-                              className="bg-gray-100 text-gray-600 px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all disabled:opacity-50"
-                            >
-                              Set
-                            </button>
-                          </div>
+                          ))}
                         </div>
                       </div>
                     </div>
                   );
                 })}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'analytics' && selectedPump && (
-            <div className="space-y-8">
-              <div className="bg-white p-8 rounded-none border border-gray-100 shadow-sm">
-                <div className="flex items-center justify-between mb-8">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">Fuel Depletion Prediction</h3>
-                    <p className="text-sm text-gray-500">AI-powered estimates based on current usage trends</p>
-                  </div>
-                  <div className="bg-purple-50 text-purple-700 px-4 py-2 rounded-none text-xs font-black uppercase flex items-center gap-2">
-                    <Zap className="w-4 h-4" />
-                    AI Prediction Enabled
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {FUEL_TYPES.map(type => {
-                    const inv = selectedPump.inventory?.[type] || DEFAULT_INVENTORY[type];
-                    const daysLeft = Math.floor(inv.current_liters / inv.daily_usage_avg);
-                    
-                    return (
-                      <div key={type} className="p-6 rounded-none border border-gray-100 bg-gray-50/50">
-                        <div className="text-xs font-black text-gray-400 uppercase mb-4 tracking-widest">{type}</div>
-                        <div className="text-4xl font-black text-gray-900 mb-2">
-                          {daysLeft > 0 ? daysLeft : '0'} 
-                          <span className="text-sm font-bold text-gray-400 ml-1">Days</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-none ${daysLeft < 2 ? 'bg-red-500' : daysLeft < 5 ? 'bg-yellow-500' : 'bg-emerald-500'}`} />
-                          <span className="text-xs font-bold text-gray-500">
-                            {daysLeft < 2 ? 'Critical Refill' : daysLeft < 5 ? 'Refill Soon' : 'Stock Healthy'}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="bg-white p-8 rounded-none border border-gray-100 shadow-sm">
-                <h3 className="text-xl font-bold text-gray-900 mb-8">Usage Trends (Last 7 Days)</h3>
-                <div className="h-64 flex items-end gap-4 px-4">
-                  {[65, 45, 75, 55, 85, 40, 90].map((val, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-2">
-                      <motion.div 
-                        initial={{ height: 0 }}
-                        animate={{ height: `${val}%` }}
-                        className="w-full bg-primary/20 rounded-t-none relative group"
-                      >
-                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                          {val * 10}L
-                        </div>
-                      </motion.div>
-                      <span className="text-[10px] font-bold text-gray-400 uppercase">Day {i+1}</span>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
           )}
@@ -682,40 +640,6 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
             </div>
           )}
 
-          {activeTab === 'activity' && (
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                <h3 className="font-bold text-gray-900">Activity Timeline</h3>
-              </div>
-              <div className="p-6 space-y-8">
-                {logs.length === 0 ? (
-                  <div className="text-center text-gray-400 italic py-8">No recent activity logged.</div>
-                ) : (
-                  logs.map((log, i) => (
-                    <div key={log.id} className="relative flex gap-4">
-                      {i !== logs.length - 1 && (
-                        <div className="absolute left-5 top-10 bottom-0 w-0.5 bg-gray-100" />
-                      )}
-                      <div className={`w-10 h-10 rounded-none flex items-center justify-center flex-shrink-0 z-10 ${
-                        log.action.includes('Refill') ? 'bg-emerald-100 text-emerald-600' : 
-                        log.action.includes('Alert') ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
-                      }`}>
-                        <History className="w-5 h-5" />
-                      </div>
-                      <div className="pb-8">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-gray-900">{log.action}</span>
-                          <span className="text-xs text-gray-400">• {new Date(log.timestamp).toLocaleTimeString()}</span>
-                        </div>
-                        <p className="text-sm text-gray-500">{log.details}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
           {activeTab === 'profile' && (
             <div className="space-y-8">
               <div className="bg-white rounded-none shadow-xl border border-gray-100 overflow-hidden">
@@ -804,7 +728,7 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {allPumps
                   .filter(p => 
-                    !p.verified_owner_id && 
+                    !p.owner_id && 
                     (p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                      p.upazila.toLowerCase().includes(searchQuery.toLowerCase()))
                   )

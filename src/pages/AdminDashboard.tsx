@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { mockService } from '../mockService';
+import { supabase } from '../lib/supabase';
 import { User, Pump, Notice, PopupBanner, LocationData, SystemStats } from '../types';
 import { 
   Users, 
@@ -29,33 +29,65 @@ export default function AdminDashboard({ user }: { user: User | null }) {
   const [claims, setClaims] = useState<any[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [popup, setPopup] = useState<PopupBanner | null>(null);
-  const [locations, setLocations] = useState<LocationData[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
   
   // Form states
   const [newNotice, setNewNotice] = useState({ title: '', description: '' });
-  const [newDivisionName, setNewDivisionName] = useState('');
-  const [newDistrictName, setNewDistrictName] = useState('');
-  const [newUpazilaName, setNewUpazilaName] = useState('');
-  const [selectedDivisionId, setSelectedDivisionId] = useState('');
-  const [selectedDistrictName, setSelectedDistrictName] = useState('');
+  const [locationForm, setLocationForm] = useState({ division: '', district: '', upazila: '' });
   const [popupForm, setPopupForm] = useState<PopupBanner>({ image_url: '', link: '', is_active: false });
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
-    const loadData = () => {
-      setStats(mockService.getSystemStats());
-      setPumps(mockService.getPumps());
-      setUsers(mockService.getUsers());
-      setClaims(mockService.getClaims());
-      setNotices(mockService.getNotices());
-      setPopup(mockService.getPopupBanner());
-      setLocations(mockService.getLocations());
-      setPopupForm(mockService.getPopupBanner());
-    };
-
     loadData();
-    const unsubscribe = mockService.subscribe(loadData);
-    return () => unsubscribe();
   }, []);
+
+  const loadData = async () => {
+    try {
+      // Fetch stats
+      const { count: userCount } = await supabase.from('users').select('*', { count: 'exact', head: true });
+      const { count: pumpCount } = await supabase.from('pumps').select('*', { count: 'exact', head: true });
+      const { count: reportCount } = await supabase.from('reports').select('*', { count: 'exact', head: true });
+      
+      setStats({
+        totalUsers: userCount || 0,
+        totalPumps: pumpCount || 0,
+        totalOwners: 0, // Simplified for now
+        totalReports: reportCount || 0
+      });
+
+      // Fetch pumps
+      const { data: pumpsData } = await supabase.from('pumps').select('*');
+      setPumps(pumpsData || []);
+
+      // Fetch users
+      const { data: usersData } = await supabase.from('users').select('*');
+      setUsers(usersData || []);
+
+      // Fetch claims
+      const { data: claimsData } = await supabase
+        .from('owner_claims')
+        .select('*, pumps(name), users(name)');
+      setClaims(claimsData || []);
+
+      // Fetch notices
+      const { data: noticesData } = await supabase.from('notices').select('*').order('created_at', { ascending: false });
+      setNotices(noticesData || []);
+
+      // Fetch popup
+      const { data: popupData } = await supabase.from('popup_banner').select('*').single();
+      if (popupData) {
+        setPopup(popupData);
+        setPopupForm(popupData);
+      }
+
+      // Fetch locations
+      const { data: locationsData } = await supabase.from('locations').select('*').order('division', { ascending: true });
+      setLocations(locationsData || []);
+
+    } catch (err) {
+      console.error('Error loading admin data:', err);
+    }
+  };
 
   if (!user || user.role !== 'admin') {
     return (
@@ -69,64 +101,170 @@ export default function AdminDashboard({ user }: { user: User | null }) {
     );
   }
 
-  const handleAddNotice = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await mockService.addNotice(newNotice);
-    setNewNotice({ title: '', description: '' });
+  const handleApprovePump = async (pumpId: string) => {
+    try {
+      const { error } = await supabase
+        .from('pumps')
+        .update({ is_verified: true })
+        .eq('id', pumpId);
+      if (error) throw error;
+      loadData();
+    } catch (err) {
+      alert('Error approving pump');
+    }
   };
 
-  const handleUpdatePopup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await mockService.updatePopupBanner(popupForm);
-    alert('Popup banner updated!');
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPopupForm({ ...popupForm, image_url: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+  const handleDeletePump = async (pumpId: string) => {
+    if (!window.confirm('Are you sure you want to delete this pump?')) return;
+    try {
+      const { error } = await supabase.from('pumps').delete().eq('id', pumpId);
+      if (error) throw error;
+      loadData();
+    } catch (err) {
+      alert('Error deleting pump');
     }
   };
 
   const handleToggleFeatured = async (pumpId: string) => {
-    await mockService.toggleFeaturedPump(pumpId);
-  };
-
-  const handleAddDivision = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDivisionName) return;
-    await mockService.addLocation({ division: newDivisionName, districts: [] });
-    setNewDivisionName('');
-  };
-
-  const handleAddDistrict = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedDivisionId || !newDistrictName) return;
-    const loc = locations.find(l => l.id === selectedDivisionId);
-    if (loc) {
-      const updatedDistricts = [...loc.districts, { name: newDistrictName, upazilas: [] }];
-      await mockService.updateLocation(selectedDivisionId, { districts: updatedDistricts });
-      setNewDistrictName('');
+    const pump = pumps.find(p => p.id === pumpId);
+    if (!pump) return;
+    try {
+      const { error } = await supabase
+        .from('pumps')
+        .update({ is_featured: !pump.is_featured })
+        .eq('id', pumpId);
+      if (error) throw error;
+      loadData();
+    } catch (err) {
+      alert('Error toggling featured status');
     }
   };
 
-  const handleAddUpazila = async (e: React.FormEvent) => {
+  const handleAddNotice = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDivisionId || !selectedDistrictName || !newUpazilaName) return;
-    const loc = locations.find(l => l.id === selectedDivisionId);
-    if (loc) {
-      const updatedDistricts = loc.districts.map(d => {
-        if (d.name === selectedDistrictName) {
-          return { ...d, upazilas: [...d.upazilas, newUpazilaName] };
-        }
-        return d;
-      });
-      await mockService.updateLocation(selectedDivisionId, { districts: updatedDistricts });
-      setNewUpazilaName('');
+    try {
+      const { error } = await supabase.from('notices').insert([newNotice]);
+      if (error) throw error;
+      setNewNotice({ title: '', description: '' });
+      loadData();
+    } catch (err) {
+      alert('Error adding notice');
+    }
+  };
+
+  const handleDeleteNotice = async (id: string) => {
+    try {
+      const { error } = await supabase.from('notices').delete().eq('id', id);
+      if (error) throw error;
+      loadData();
+    } catch (err) {
+      alert('Error deleting notice');
+    }
+  };
+
+  const handleUpdatePopup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase.from('popup_banner').upsert([popupForm]);
+      if (error) throw error;
+      alert('Popup banner updated!');
+      loadData();
+    } catch (err) {
+      alert('Error updating popup');
+    }
+  };
+
+  const handleApproveClaim = async (claimId: string, pumpId: string, userId: string) => {
+    try {
+      // 1. Update claim status
+      const { error: claimError } = await supabase
+        .from('owner_claims')
+        .update({ verification_status: 'approved' })
+        .eq('id', claimId);
+      if (claimError) throw claimError;
+
+      // 2. Update pump owner
+      const { error: pumpError } = await supabase
+        .from('pumps')
+        .update({ owner_id: userId, is_verified: true })
+        .eq('id', pumpId);
+      if (pumpError) throw pumpError;
+
+      loadData();
+      alert('Claim approved and ownership transferred.');
+    } catch (err) {
+      console.error('Error approving claim:', err);
+      alert('Error approving claim');
+    }
+  };
+
+  const handleRejectClaim = async (claimId: string) => {
+    try {
+      const { error } = await supabase
+        .from('owner_claims')
+        .update({ verification_status: 'rejected' })
+        .eq('id', claimId);
+      if (error) throw error;
+      loadData();
+      alert('Claim rejected.');
+    } catch (err) {
+      console.error('Error rejecting claim:', err);
+      alert('Error rejecting claim');
+    }
+  };
+
+  const handleAddLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!locationForm.division || !locationForm.district || !locationForm.upazila) return;
+    try {
+      const { error } = await supabase.from('locations').insert([locationForm]);
+      if (error) throw error;
+      setLocationForm({ division: '', district: '', upazila: '' });
+      loadData();
+      alert('Location added successfully!');
+    } catch (err) {
+      alert('Error adding location');
+    }
+  };
+
+  const handleDeleteLocation = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this location?')) return;
+    try {
+      const { error } = await supabase.from('locations').delete().eq('id', id);
+      if (error) throw error;
+      loadData();
+    } catch (err) {
+      alert('Error deleting location');
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `banners/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('banners')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage
+        .from('banners')
+        .getPublicUrl(filePath);
+
+      setPopupForm({ ...popupForm, image_url: data.publicUrl });
+      alert('Image uploaded successfully!');
+    } catch (err) {
+      console.error('Error uploading image:', err);
+      alert('Error uploading image. Make sure the "banners" bucket exists in Supabase Storage.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -278,14 +416,20 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                               </td>
                               <td className="px-6 py-4 text-right space-x-2">
                                 <button 
-                                  onClick={() => mockService.approveUser(u.id)}
+                                  onClick={async () => {
+                                    const { error } = await supabase.from('users').update({ status: 'approved' }).eq('id', u.id);
+                                    if (!error) loadData();
+                                  }}
                                   className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all"
                                   title="Approve"
                                 >
                                   <CheckCircle2 className="w-5 h-5" />
                                 </button>
                                 <button 
-                                  onClick={() => mockService.rejectUser(u.id)}
+                                  onClick={async () => {
+                                    const { error } = await supabase.from('users').update({ status: 'rejected' }).eq('id', u.id);
+                                    if (!error) loadData();
+                                  }}
                                   className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
                                   title="Reject"
                                 >
@@ -317,26 +461,26 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {pumps.filter(p => p.status === 'pending').length === 0 ? (
+                        {pumps.filter(p => !p.is_verified).length === 0 ? (
                           <tr>
                             <td colSpan={4} className="px-6 py-8 text-center text-gray-400 font-medium">No pending pump registrations</td>
                           </tr>
                         ) : (
-                          pumps.filter(p => p.status === 'pending').map(p => (
+                          pumps.filter(p => !p.is_verified).map(p => (
                             <tr key={p.id} className="hover:bg-gray-50 transition-all">
                               <td className="px-6 py-4 font-bold text-gray-900">{p.name}</td>
                               <td className="px-6 py-4 text-sm text-gray-500">{p.upazila}, {p.district}</td>
-                              <td className="px-6 py-4 text-xs font-mono text-gray-400">{p.verified_owner_id || 'N/A'}</td>
+                              <td className="px-6 py-4 text-xs font-mono text-gray-400">{p.owner_id || 'N/A'}</td>
                               <td className="px-6 py-4 text-right space-x-2">
                                 <button 
-                                  onClick={() => mockService.approvePump(p.id)}
+                                  onClick={() => handleApprovePump(p.id)}
                                   className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all"
                                   title="Approve"
                                 >
                                   <CheckCircle2 className="w-5 h-5" />
                                 </button>
                                 <button 
-                                  onClick={() => mockService.deletePump(p.id)}
+                                  onClick={() => handleDeletePump(p.id)}
                                   className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
                                   title="Delete"
                                 >
@@ -361,35 +505,36 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                     <table className="w-full text-left">
                       <thead className="bg-gray-50 border-b border-gray-100">
                         <tr>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">User ID</th>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Pump ID</th>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Date</th>
+                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Station</th>
+                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Claimant</th>
                           <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {claims.filter(c => c.verification_status === 'pending').length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="px-6 py-8 text-center text-gray-400 font-medium">No pending ownership claims</td>
+                            <td colSpan={3} className="px-6 py-8 text-center text-gray-400 font-medium">No pending ownership claims</td>
                           </tr>
                         ) : (
                           claims.filter(c => c.verification_status === 'pending').map(c => (
                             <tr key={c.id} className="hover:bg-gray-50 transition-all">
-                              <td className="px-6 py-4 text-sm font-bold text-gray-900">{c.user_id}</td>
-                              <td className="px-6 py-4 text-sm text-gray-500">{c.pump_id}</td>
-                              <td className="px-6 py-4 text-xs text-gray-400">{new Date(c.timestamp).toLocaleDateString()}</td>
+                              <td className="px-6 py-4 font-bold text-gray-900">{c.pumps?.name || 'Unknown Station'}</td>
+                              <td className="px-6 py-4">
+                                <div className="font-bold text-gray-900">{c.users?.name || 'Unknown User'}</div>
+                                <div className="text-xs text-gray-400">ID: {c.user_id}</div>
+                              </td>
                               <td className="px-6 py-4 text-right space-x-2">
                                 <button 
-                                  onClick={() => mockService.approveClaim(c.id)}
+                                  onClick={() => handleApproveClaim(c.id, c.pump_id, c.user_id)}
                                   className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all"
-                                  title="Approve"
+                                  title="Approve Claim"
                                 >
                                   <CheckCircle2 className="w-5 h-5" />
                                 </button>
                                 <button 
-                                  onClick={() => mockService.updateClaim(c.id, 'rejected')}
+                                  onClick={() => handleRejectClaim(c.id)}
                                   className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
-                                  title="Reject"
+                                  title="Reject Claim"
                                 >
                                   <XCircle className="w-5 h-5" />
                                 </button>
@@ -510,7 +655,7 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                           <p className="text-gray-500 text-sm leading-relaxed">{notice.description}</p>
                         </div>
                         <button 
-                          onClick={() => mockService.deleteNotice(notice.id)}
+                          onClick={() => handleDeleteNotice(notice.id)}
                           className="p-2 text-red-500 hover:bg-red-50 rounded-none transition-all"
                         >
                           <Trash2 className="w-5 h-5" />
@@ -546,9 +691,13 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                               className="flex-grow px-4 py-3 bg-gray-50 border border-gray-100 rounded-none focus:ring-2 focus:ring-primary outline-none font-bold"
                               placeholder="https://example.com/image.jpg"
                             />
-                            <label className="cursor-pointer bg-gray-100 p-3 rounded-none hover:bg-gray-200 transition-all flex items-center justify-center">
-                              <Upload className="w-5 h-5 text-gray-600" />
-                              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                            <label className={`cursor-pointer bg-gray-100 p-3 rounded-none hover:bg-gray-200 transition-all flex items-center justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                              {isUploading ? (
+                                <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Upload className="w-5 h-5 text-gray-600" />
+                              )}
+                              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading} />
                             </label>
                           </div>
                           <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest ml-1">Paste URL or upload from device</p>
@@ -606,123 +755,84 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                 className="space-y-8"
               >
                 <h2 className="text-2xl font-black text-gray-900">Location Management</h2>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  {/* Add Division */}
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4">Add Division</h3>
-                    <form onSubmit={handleAddDivision} className="space-y-4">
+                
+                <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+                  <h3 className="text-lg font-bold text-gray-900 mb-6">Add New Location</h3>
+                  <form onSubmit={handleAddLocation} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Division</label>
                       <input 
                         type="text"
-                        value={newDivisionName}
-                        onChange={e => setNewDivisionName(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                        placeholder="Division Name"
+                        required
+                        value={locationForm.division}
+                        onChange={e => setLocationForm({...locationForm, division: e.target.value})}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
+                        placeholder="e.g. Dhaka"
                       />
-                      <button type="submit" className="w-full bg-primary text-white py-2 rounded-xl font-bold hover:bg-primary-hover transition-all text-sm">
-                        Add Division
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Add District */}
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4">Add District</h3>
-                    <form onSubmit={handleAddDistrict} className="space-y-4">
-                      <select 
-                        value={selectedDivisionId}
-                        onChange={e => setSelectedDivisionId(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                      >
-                        <option value="">Select Division</option>
-                        {locations.map(l => <option key={l.id} value={l.id}>{l.division}</option>)}
-                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">District</label>
                       <input 
                         type="text"
-                        value={newDistrictName}
-                        onChange={e => setNewDistrictName(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                        placeholder="District Name"
+                        required
+                        value={locationForm.district}
+                        onChange={e => setLocationForm({...locationForm, district: e.target.value})}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
+                        placeholder="e.g. Gazipur"
                       />
-                      <button type="submit" className="w-full bg-primary text-white py-2 rounded-xl font-bold hover:bg-primary-hover transition-all text-sm">
-                        Add District
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Add Upazila */}
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4">Add Upazila</h3>
-                    <form onSubmit={handleAddUpazila} className="space-y-4">
-                      <select 
-                        value={selectedDivisionId}
-                        onChange={e => {
-                          setSelectedDivisionId(e.target.value);
-                          setSelectedDistrictName('');
-                        }}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                      >
-                        <option value="">Select Division</option>
-                        {locations.map(l => <option key={l.id} value={l.id}>{l.division}</option>)}
-                      </select>
-                      <select 
-                        value={selectedDistrictName}
-                        onChange={e => setSelectedDistrictName(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                        disabled={!selectedDivisionId}
-                      >
-                        <option value="">Select District</option>
-                        {locations.find(l => l.id === selectedDivisionId)?.districts.map(d => (
-                          <option key={d.name} value={d.name}>{d.name}</option>
-                        ))}
-                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Upazila</label>
                       <input 
                         type="text"
-                        value={newUpazilaName}
-                        onChange={e => setNewUpazilaName(e.target.value)}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-primary outline-none font-bold text-sm"
-                        placeholder="Upazila Name"
+                        required
+                        value={locationForm.upazila}
+                        onChange={e => setLocationForm({...locationForm, upazila: e.target.value})}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
+                        placeholder="e.g. Sreepur"
                       />
-                      <button type="submit" className="w-full bg-primary text-white py-2 rounded-xl font-bold hover:bg-primary-hover transition-all text-sm">
-                        Add Upazila
-                      </button>
-                    </form>
-                  </div>
+                    </div>
+                    <button type="submit" className="bg-primary text-white px-6 py-3 rounded-none font-bold hover:bg-primary-hover transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2">
+                      <Plus className="w-5 h-5" />
+                      Add
+                    </button>
+                  </form>
                 </div>
 
-                <div className="space-y-4">
-                  <h3 className="text-lg font-bold text-gray-900">Existing Locations</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {locations.map(loc => (
-                      <div key={loc.id} className="bg-white p-6 rounded-none border border-gray-100 shadow-sm">
-                        <div className="flex items-center justify-between mb-4">
-                          <h4 className="text-xl font-black text-gray-900">{loc.division}</h4>
-                          <button 
-                            onClick={() => mockService.deleteLocation(loc.id)}
-                            className="text-red-500 hover:bg-red-50 p-2 rounded-xl transition-all"
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
-                        </div>
-                        <div className="space-y-4">
-                          {loc.districts.map((dist, idx) => (
-                            <div key={idx} className="bg-gray-50 p-4 rounded-none border border-gray-100">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="font-bold text-gray-700">{dist.name}</span>
-                                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{dist.upazilas.length} Upazilas</span>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {dist.upazilas.map((up, uIdx) => (
-                                  <span key={uIdx} className="bg-white px-3 py-1 rounded-none text-xs font-bold text-gray-500 border border-gray-100">
-                                    {up}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50 border-b border-gray-100">
+                      <tr>
+                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Division</th>
+                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">District</th>
+                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Upazila</th>
+                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {locations.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-8 text-center text-gray-400 font-medium">No locations added yet</td>
+                        </tr>
+                      ) : (
+                        locations.map(loc => (
+                          <tr key={loc.id} className="hover:bg-gray-50 transition-all">
+                            <td className="px-6 py-4 font-bold text-gray-900">{loc.division}</td>
+                            <td className="px-6 py-4 font-bold text-gray-700">{loc.district}</td>
+                            <td className="px-6 py-4 text-gray-500">{loc.upazila}</td>
+                            <td className="px-6 py-4 text-right">
+                              <button 
+                                onClick={() => handleDeleteLocation(loc.id)}
+                                className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </motion.div>
             )}

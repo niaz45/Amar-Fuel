@@ -1,6 +1,6 @@
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { mockService } from './mockService';
+import { supabase } from './lib/supabase';
 import { User } from './types';
 import { Fuel, MapPin, User as UserIcon, LogOut, LayoutDashboard, Search, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,18 +15,50 @@ import PumpDetails from './pages/PumpDetails';
 import CheckoutPage from './pages/CheckoutPage';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(mockService.getCurrentUser());
-  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = mockService.subscribe(() => {
-      setUser(mockService.getCurrentUser());
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata.name || session.user.email?.split('@')[0] || 'User',
+          username: session.user.user_metadata.username || session.user.email?.split('@')[0] || 'user',
+          email: session.user.email || '',
+          mobile: session.user.user_metadata.mobile || '',
+          role: session.user.user_metadata.role || 'user',
+          status: 'approved',
+          createdAt: session.user.created_at,
+        });
+      }
+      setLoading(false);
     });
-    return () => unsubscribe();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata.name || session.user.email?.split('@')[0] || 'User',
+          username: session.user.user_metadata.username || session.user.email?.split('@')[0] || 'user',
+          email: session.user.email || '',
+          mobile: session.user.user_metadata.mobile || '',
+          role: session.user.user_metadata.role || 'user',
+          status: 'approved',
+          createdAt: session.user.created_at,
+        });
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
-    await mockService.logout();
+    await supabase.auth.signOut();
     window.location.href = '/';
   };
 
