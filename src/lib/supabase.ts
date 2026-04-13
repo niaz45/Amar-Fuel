@@ -9,7 +9,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key',
+  supabaseAnonKey || 'sb_publishable_NeBA2E8tPjofALKQ2iExdA_9073jYb-',
   {
     global: {
       fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
