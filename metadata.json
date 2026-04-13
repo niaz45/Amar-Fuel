@@ -1,0 +1,5 @@
+{
+  "name": "Remix: FuelBD - Fuel Availability Tracker",
+  "description": "A real-time fuel availability tracking platform for Bangladesh during oil crises. Find pumps by location and check stock status of Octane, Petrol, Diesel, and CNG.",
+  "requestFramePermissions": []
+}

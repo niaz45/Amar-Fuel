@@ -1,0 +1,125 @@
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { mockService } from './mockService';
+import { User } from './types';
+import { Fuel, MapPin, User as UserIcon, LogOut, LayoutDashboard, Search, Filter } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+// Pages
+import HomePage from './pages/HomePage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import AdminDashboard from './pages/AdminDashboard';
+import OwnerDashboard from './pages/OwnerDashboard';
+import PumpDetails from './pages/PumpDetails';
+import CheckoutPage from './pages/CheckoutPage';
+
+export default function App() {
+  const [user, setUser] = useState<User | null>(mockService.getCurrentUser());
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = mockService.subscribe(() => {
+      setUser(mockService.getCurrentUser());
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await mockService.logout();
+    window.location.href = '/';
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <Router>
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        {/* Navigation */}
+        <nav className="bg-primary text-white sticky top-0 z-50 shadow-md">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16">
+              <div className="flex items-center">
+                <Link to="/" className="flex items-center gap-2">
+                  <Fuel className="text-white w-6 h-6" />
+                  <span className="text-xl font-bold tracking-tight">
+                    FuelBD
+                  </span>
+                </Link>
+              </div>
+
+              <div className="flex items-center gap-6">
+                {user ? (
+                  <>
+                    {user.role === 'admin' && (
+                      <Link to="/admin" className="text-white/80 hover:text-white flex items-center gap-1 text-sm font-medium transition-colors">
+                        <LayoutDashboard className="w-4 h-4" />
+                        <span>Super Admin</span>
+                      </Link>
+                    )}
+                    {user.role === 'owner' && (
+                      <Link to="/owner" className="text-white/80 hover:text-white flex items-center gap-1 text-sm font-medium transition-colors">
+                        <LayoutDashboard className="w-4 h-4" />
+                        <span>Admin</span>
+                      </Link>
+                    )}
+                    <div className="flex items-center gap-2 text-white/80">
+                      <UserIcon className="w-4 h-4" />
+                      <span className="text-sm font-medium hidden sm:inline">{user.name}</span>
+                    </div>
+                    <button 
+                      onClick={handleLogout}
+                      className="text-white/60 hover:text-white transition-colors"
+                    >
+                      <LogOut className="w-5 h-5" />
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <Link to="/login" className="text-sm font-medium text-white/80 hover:text-white transition-colors">
+                      Login
+                    </Link>
+                    <Link to="/register" className="bg-white text-primary px-4 py-2 rounded-none text-sm font-bold hover:bg-white/90 transition-colors">
+                      Register
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        {/* Main Content */}
+        <main className="flex-grow">
+          <Routes>
+            <Route path="/" element={<HomePage user={user} />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/admin" element={<AdminDashboard user={user} />} />
+            <Route path="/owner" element={<OwnerDashboard user={user} />} />
+            <Route path="/pump/:id" element={<PumpDetails user={user} />} />
+            <Route path="/checkout/:pumpId" element={<CheckoutPage user={user} />} />
+          </Routes>
+        </main>
+
+        {/* Footer */}
+        <footer className="bg-primary text-white/80 py-10">
+          <div className="max-w-7xl mx-auto px-4 text-center">
+            <p className="text-sm font-medium">
+              © 2026 FuelBD - Real-time Fuel Availability Tracker for Bangladesh
+            </p>
+            <p className="text-xs mt-2 opacity-60">
+              Stay informed, save fuel, save time.
+            </p>
+          </div>
+        </footer>
+      </div>
+    </Router>
+  );
+}
