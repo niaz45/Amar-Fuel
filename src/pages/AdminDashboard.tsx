@@ -29,13 +29,16 @@ export default function AdminDashboard({ user }: { user: User | null }) {
   const [claims, setClaims] = useState<any[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [popup, setPopup] = useState<PopupBanner | null>(null);
-  const [locations, setLocations] = useState<any[]>([]);
+  const [locations, setLocations] = useState<LocationData[]>([]);
   
   // Form states
   const [newNotice, setNewNotice] = useState({ title: '', description: '' });
-  const [locationForm, setLocationForm] = useState({ division: '', district: '', upazila: '' });
+  const [newDivisionName, setNewDivisionName] = useState('');
+  const [newDistrictName, setNewDistrictName] = useState('');
+  const [newUpazilaName, setNewUpazilaName] = useState('');
+  const [selectedDivisionId, setSelectedDivisionId] = useState('');
+  const [selectedDistrictName, setSelectedDistrictName] = useState('');
   const [popupForm, setPopupForm] = useState<PopupBanner>({ image_url: '', link: '', is_active: false });
-  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -63,14 +66,8 @@ export default function AdminDashboard({ user }: { user: User | null }) {
       const { data: usersData } = await supabase.from('users').select('*');
       setUsers(usersData || []);
 
-      // Fetch claims
-      const { data: claimsData } = await supabase
-        .from('owner_claims')
-        .select('*, pumps(name), users(name)');
-      setClaims(claimsData || []);
-
       // Fetch notices
-      const { data: noticesData } = await supabase.from('notices').select('*').order('created_at', { ascending: false });
+      const { data: noticesData } = await supabase.from('notices').select('*');
       setNotices(noticesData || []);
 
       // Fetch popup
@@ -81,7 +78,7 @@ export default function AdminDashboard({ user }: { user: User | null }) {
       }
 
       // Fetch locations
-      const { data: locationsData } = await supabase.from('locations').select('*').order('division', { ascending: true });
+      const { data: locationsData } = await supabase.from('locations').select('*');
       setLocations(locationsData || []);
 
     } catch (err) {
@@ -174,97 +171,12 @@ export default function AdminDashboard({ user }: { user: User | null }) {
     }
   };
 
-  const handleApproveClaim = async (claimId: string, pumpId: string, userId: string) => {
-    try {
-      // 1. Update claim status
-      const { error: claimError } = await supabase
-        .from('owner_claims')
-        .update({ verification_status: 'approved' })
-        .eq('id', claimId);
-      if (claimError) throw claimError;
-
-      // 2. Update pump owner
-      const { error: pumpError } = await supabase
-        .from('pumps')
-        .update({ owner_id: userId, is_verified: true })
-        .eq('id', pumpId);
-      if (pumpError) throw pumpError;
-
-      loadData();
-      alert('Claim approved and ownership transferred.');
-    } catch (err) {
-      console.error('Error approving claim:', err);
-      alert('Error approving claim');
-    }
-  };
-
-  const handleRejectClaim = async (claimId: string) => {
-    try {
-      const { error } = await supabase
-        .from('owner_claims')
-        .update({ verification_status: 'rejected' })
-        .eq('id', claimId);
-      if (error) throw error;
-      loadData();
-      alert('Claim rejected.');
-    } catch (err) {
-      console.error('Error rejecting claim:', err);
-      alert('Error rejecting claim');
-    }
-  };
-
-  const handleAddLocation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!locationForm.division || !locationForm.district || !locationForm.upazila) return;
-    try {
-      const { error } = await supabase.from('locations').insert([locationForm]);
-      if (error) throw error;
-      setLocationForm({ division: '', district: '', upazila: '' });
-      loadData();
-      alert('Location added successfully!');
-    } catch (err) {
-      alert('Error adding location');
-    }
-  };
-
-  const handleDeleteLocation = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this location?')) return;
-    try {
-      const { error } = await supabase.from('locations').delete().eq('id', id);
-      if (error) throw error;
-      loadData();
-    } catch (err) {
-      alert('Error deleting location');
-    }
-  };
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random()}.${fileExt}`;
-      const filePath = `banners/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('banners')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage
-        .from('banners')
-        .getPublicUrl(filePath);
-
-      setPopupForm({ ...popupForm, image_url: data.publicUrl });
-      alert('Image uploaded successfully!');
-    } catch (err) {
-      console.error('Error uploading image:', err);
-      alert('Error uploading image. Make sure the "banners" bucket exists in Supabase Storage.');
-    } finally {
-      setIsUploading(false);
+    if (file) {
+      // In a real app, you'd upload to Supabase Storage
+      // For now, we'll just alert or use a placeholder
+      alert('Image upload to Supabase Storage will be integrated soon. Please use a URL for now.');
     }
   };
 
@@ -495,55 +407,14 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                   </div>
                 </div>
 
-                {/* Claim Approvals */}
+                {/* Claim Approvals (Simplified) */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <ExternalLink className="w-5 h-5 text-primary" />
                     Pending Ownership Claims
                   </h3>
-                  <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                    <table className="w-full text-left">
-                      <thead className="bg-gray-50 border-b border-gray-100">
-                        <tr>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Station</th>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Claimant</th>
-                          <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {claims.filter(c => c.verification_status === 'pending').length === 0 ? (
-                          <tr>
-                            <td colSpan={3} className="px-6 py-8 text-center text-gray-400 font-medium">No pending ownership claims</td>
-                          </tr>
-                        ) : (
-                          claims.filter(c => c.verification_status === 'pending').map(c => (
-                            <tr key={c.id} className="hover:bg-gray-50 transition-all">
-                              <td className="px-6 py-4 font-bold text-gray-900">{c.pumps?.name || 'Unknown Station'}</td>
-                              <td className="px-6 py-4">
-                                <div className="font-bold text-gray-900">{c.users?.name || 'Unknown User'}</div>
-                                <div className="text-xs text-gray-400">ID: {c.user_id}</div>
-                              </td>
-                              <td className="px-6 py-4 text-right space-x-2">
-                                <button 
-                                  onClick={() => handleApproveClaim(c.id, c.pump_id, c.user_id)}
-                                  className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all"
-                                  title="Approve Claim"
-                                >
-                                  <CheckCircle2 className="w-5 h-5" />
-                                </button>
-                                <button 
-                                  onClick={() => handleRejectClaim(c.id)}
-                                  className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
-                                  title="Reject Claim"
-                                >
-                                  <XCircle className="w-5 h-5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                  <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-8 text-center text-gray-400 italic">
+                    Claim management will be integrated with Supabase soon.
                   </div>
                 </div>
               </motion.div>
@@ -691,13 +562,9 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                               className="flex-grow px-4 py-3 bg-gray-50 border border-gray-100 rounded-none focus:ring-2 focus:ring-primary outline-none font-bold"
                               placeholder="https://example.com/image.jpg"
                             />
-                            <label className={`cursor-pointer bg-gray-100 p-3 rounded-none hover:bg-gray-200 transition-all flex items-center justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                              {isUploading ? (
-                                <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                              ) : (
-                                <Upload className="w-5 h-5 text-gray-600" />
-                              )}
-                              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading} />
+                            <label className="cursor-pointer bg-gray-100 p-3 rounded-none hover:bg-gray-200 transition-all flex items-center justify-center">
+                              <Upload className="w-5 h-5 text-gray-600" />
+                              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
                             </label>
                           </div>
                           <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest ml-1">Paste URL or upload from device</p>
@@ -755,84 +622,8 @@ export default function AdminDashboard({ user }: { user: User | null }) {
                 className="space-y-8"
               >
                 <h2 className="text-2xl font-black text-gray-900">Location Management</h2>
-                
-                <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
-                  <h3 className="text-lg font-bold text-gray-900 mb-6">Add New Location</h3>
-                  <form onSubmit={handleAddLocation} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Division</label>
-                      <input 
-                        type="text"
-                        required
-                        value={locationForm.division}
-                        onChange={e => setLocationForm({...locationForm, division: e.target.value})}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
-                        placeholder="e.g. Dhaka"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">District</label>
-                      <input 
-                        type="text"
-                        required
-                        value={locationForm.district}
-                        onChange={e => setLocationForm({...locationForm, district: e.target.value})}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
-                        placeholder="e.g. Gazipur"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Upazila</label>
-                      <input 
-                        type="text"
-                        required
-                        value={locationForm.upazila}
-                        onChange={e => setLocationForm({...locationForm, upazila: e.target.value})}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-primary outline-none font-bold"
-                        placeholder="e.g. Sreepur"
-                      />
-                    </div>
-                    <button type="submit" className="bg-primary text-white px-6 py-3 rounded-none font-bold hover:bg-primary-hover transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2">
-                      <Plus className="w-5 h-5" />
-                      Add
-                    </button>
-                  </form>
-                </div>
-
-                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                  <table className="w-full text-left">
-                    <thead className="bg-gray-50 border-b border-gray-100">
-                      <tr>
-                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Division</th>
-                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">District</th>
-                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest">Upazila</th>
-                        <th className="px-6 py-4 text-xs font-black text-gray-400 uppercase tracking-widest text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {locations.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-6 py-8 text-center text-gray-400 font-medium">No locations added yet</td>
-                        </tr>
-                      ) : (
-                        locations.map(loc => (
-                          <tr key={loc.id} className="hover:bg-gray-50 transition-all">
-                            <td className="px-6 py-4 font-bold text-gray-900">{loc.division}</td>
-                            <td className="px-6 py-4 font-bold text-gray-700">{loc.district}</td>
-                            <td className="px-6 py-4 text-gray-500">{loc.upazila}</td>
-                            <td className="px-6 py-4 text-right">
-                              <button 
-                                onClick={() => handleDeleteLocation(loc.id)}
-                                className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-8 text-center text-gray-400 italic">
+                  Location management will be integrated with Supabase soon.
                 </div>
               </motion.div>
             )}

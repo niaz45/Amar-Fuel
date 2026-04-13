@@ -68,13 +68,6 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
         const { data: allData } = await supabase.from('pumps').select('*').is('owner_id', null);
         setAllPumps(allData || []);
 
-        // Fetch user's claims
-        const { data: claimsData } = await supabase
-          .from('owner_claims')
-          .select('*')
-          .eq('user_id', user.id);
-        setClaims(claimsData || []);
-
       } catch (err) {
         console.error('Error fetching dashboard data:', err);
       }
@@ -245,28 +238,10 @@ export default function OwnerDashboard({ user }: { user: User | null }) {
   const handleClaimPump = async (pumpId: string) => {
     if (!user) return;
     try {
-      const { error } = await supabase
-        .from('owner_claims')
-        .insert([{
-          user_id: user.id,
-          pump_id: pumpId,
-          verification_status: 'pending',
-          timestamp: new Date().toISOString()
-        }]);
-
-      if (error) throw error;
-
-      // Refresh claims
-      const { data: claimsData } = await supabase
-        .from('owner_claims')
-        .select('*')
-        .eq('user_id', user.id);
-      setClaims(claimsData || []);
-      
-      alert('Claim request submitted successfully. Admin will review your request.');
+      // For now, we'll just alert that this feature is coming soon or use a simple insert if we had a claims table
+      alert('Claim feature will be integrated with Supabase soon. Please contact admin directly.');
     } catch (err) {
       console.error('Error claiming pump:', err);
-      alert('Error submitting claim. You may have already claimed this station.');
     }
   };
 
