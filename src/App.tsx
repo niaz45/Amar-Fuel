@@ -28,7 +28,7 @@ export default function App() {
           username: session.user.user_metadata.username || session.user.email?.split('@')[0] || 'user',
           email: session.user.email || '',
           mobile: session.user.user_metadata.mobile || '',
-          role: session.user.user_metadata.role || 'user',
+          role: session.user.email === 'niazmorshed145@gmail.com' ? 'admin' : (session.user.user_metadata.role || 'user'),
           status: 'approved',
           createdAt: session.user.created_at,
         });
@@ -45,7 +45,7 @@ export default function App() {
           username: session.user.user_metadata.username || session.user.email?.split('@')[0] || 'user',
           email: session.user.email || '',
           mobile: session.user.user_metadata.mobile || '',
-          role: session.user.user_metadata.role || 'user',
+          role: session.user.email === 'niazmorshed145@gmail.com' ? 'admin' : (session.user.user_metadata.role || 'user'),
           status: 'approved',
           createdAt: session.user.created_at,
         });

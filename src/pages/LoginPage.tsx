@@ -23,7 +23,11 @@ export default function LoginPage() {
       if (error) throw error;
       navigate('/');
     } catch (err: any) {
-      setError('Email or password is incorrect');
+      if (err.message === 'Failed to fetch') {
+        setError('Connection error: Please check your Supabase URL in environment variables. It might have a typo.');
+      } else {
+        setError('Email or password is incorrect');
+      }
     } finally {
       setLoading(false);
     }

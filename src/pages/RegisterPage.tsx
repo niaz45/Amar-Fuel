@@ -99,7 +99,11 @@ export default function RegisterPage() {
 
       navigate('/login');
     } catch (err: any) {
-      setError(err.message || 'Failed to register. Please try again.');
+      if (err.message === 'Failed to fetch') {
+        setError('Connection error: Please check your Supabase URL in environment variables. It might have a typo.');
+      } else {
+        setError(err.message || 'Failed to register. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
